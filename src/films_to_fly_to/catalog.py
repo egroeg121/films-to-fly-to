@@ -58,14 +58,6 @@ def _parse_catalog_html(html_text: str) -> list[CatalogFilm]:
     films: list[CatalogFilm] = []
     seen_titles: set[str] = set()
 
-    # Split on card boundaries — each card has a link to /en/content/
-    # We split the HTML by these anchor hrefs and parse each chunk
-    card_pattern = re.compile(
-        r'<a\s[^>]*href="(/en/content/[^"]+)"[^>]*>.*?</a>',
-        re.DOTALL,
-    )
-
-    # Find all content links with their surrounding context
     # Strategy: find each film card block by locating the title element
     title_pattern = re.compile(
         r'class="[^"]*media-title-ellipsis[^"]*"[^>]*>([^<]+)<',
@@ -84,7 +76,7 @@ def _parse_catalog_html(html_text: str) -> list[CatalogFilm]:
         re.IGNORECASE,
     )
     poster_pattern = re.compile(
-        r'<img\s[^>]*src="(https://[^"]*entertainment\.ba\.com[^"]*\.(?:jpg|png|webp)[^"]*)"',
+        r'<img\s[^>]*src="(https://[^"]+\.(?:jpg|png|webp)[^"]*)"',
         re.IGNORECASE,
     )
     detail_link_pattern = re.compile(

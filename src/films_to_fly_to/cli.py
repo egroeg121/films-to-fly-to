@@ -17,6 +17,7 @@ MVP notes:
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import time
@@ -85,7 +86,12 @@ def run(flight: str, date: str, *, omdb_key: str) -> int:
             time.sleep(0.15)
         try:
             result = source.lookup(film.title, film.year)
-        except Exception:
+        except urllib.error.HTTPError as exc:
+            if exc.code in (401, 403):
+                print(f"\nerror: OMDb rejected key (HTTP {exc.code}) — check OMDB_API_KEY", file=sys.stderr)
+                return 1
+            result = None
+        except (urllib.error.URLError, json.JSONDecodeError):
             result = None
         ranked.append(RankedFilm(catalog=film, rating=result))
 
