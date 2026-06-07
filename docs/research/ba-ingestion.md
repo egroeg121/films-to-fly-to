@@ -129,10 +129,9 @@ ingestion), revisit if volume grows.
    holding-page mode — needs a fetch from a non-rate-limited path, or
    `playwright` against a real browser to bypass the queue. File as follow-up
    bead before writing the scraper.
-2. **Catalog-vs-aircraft segmentation** — does the site actually surface
-   different lists per aircraft (e.g. A380 vs 787) via a query param or
-   separate URL? Current evidence says no, but worth confirming once we can
-   load the real page.
+2. ~~**Catalog-vs-aircraft segmentation**~~ — **RESOLVED (`ftft-pou`)**: no
+   aircraft segmentation exists at any level. One catalog per cycle (`BAW`
+   group, single microsite). See `ba-ife-aircraft-segmentation.md`.
 3. **Historical snapshots** — neither the website nor the (dead) IFE API
    exposes past months. Our archive only goes as far back as the date we start
    snapshotting. Make sure the first cron run lands before any downstream
