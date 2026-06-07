@@ -1,0 +1,16 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "films-to-fly-to"
+version = "0.1.0"
+description = "Rank in-flight films for your BA flight"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.scripts]
+films-to-fly-to = "films_to_fly_to.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/films_to_fly_to"]
