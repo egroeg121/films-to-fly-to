@@ -11,6 +11,13 @@ dependencies = []
 
 [project.scripts]
 films-to-fly-to = "films_to_fly_to.cli:main"
+catalog-snapshot = "films_to_fly_to.cli_snapshot:main"
+catalog-diff = "films_to_fly_to.cli_diff:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/films_to_fly_to"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+]
