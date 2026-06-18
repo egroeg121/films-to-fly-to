@@ -29,7 +29,7 @@ app = FastAPI(title="Films to Fly To")
 _CATALOG_TTL = 48 * 3600  # 48 hours
 _RATING_TTL = 7 * 24 * 3600  # 7 days
 
-_DB_PATH = Path.home() / ".ftft" / "cache.db"
+_DB_PATH = Path(os.environ.get("DATA_DIR", str(Path.home() / ".ftft"))) / "cache.db"
 
 
 def _get_db() -> sqlite3.Connection | None:

@@ -1,0 +1,14 @@
+services:
+  web:
+    build: .
+    ports:
+      - '8000:8000'
+    environment:
+      - OMDB_API_KEY=${OMDB_API_KEY}
+      - DATA_DIR=/data
+    volumes:
+      - ftft-data:/data
+    restart: unless-stopped
+
+volumes:
+  ftft-data:
