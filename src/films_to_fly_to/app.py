@@ -9,8 +9,12 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
+import sys
 import time
 import urllib.error
+from datetime import datetime
+from pathlib import Path
 from typing import Annotated
 
 from fastapi import FastAPI, Form, Request
@@ -22,31 +26,111 @@ from films_to_fly_to.ratings import OmdbRatingSource, RatingResult
 
 app = FastAPI(title="Films to Fly To")
 
-# Simple in-memory cache with TTL
-_CATALOG_TTL = 3600.0  # 1 hour — catalog changes monthly
-_RATING_TTL = 86400.0  # 24 hours — ratings are stable
+_CATALOG_TTL = 48 * 3600  # 48 hours
+_RATING_TTL = 7 * 24 * 3600  # 7 days
 
-_catalog_cache: tuple[float, list[CatalogFilm]] | None = None
-_rating_cache: dict[tuple[str, int | None], tuple[float, RatingResult | None]] = {}
+_DB_PATH = Path.home() / ".ftft" / "cache.db"
+
+
+def _get_db() -> sqlite3.Connection | None:
+    try:
+        _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(_DB_PATH, check_same_thread=False)
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS catalog_cache "
+            "(month TEXT PRIMARY KEY, films_json TEXT, fetched_at INTEGER)"
+        )
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS rating_cache "
+            "(title TEXT, year INTEGER, result_json TEXT, fetched_at INTEGER, "
+            "PRIMARY KEY (title, year))"
+        )
+        conn.commit()
+        return conn
+    except Exception as exc:
+        print(f"ftft cache: DB unavailable, falling back to live fetch: {exc}", file=sys.stderr)
+        return None
+
+
+_db: sqlite3.Connection | None = _get_db()
 
 
 def _get_catalog() -> list[CatalogFilm]:
-    global _catalog_cache
-    now = time.monotonic()
-    if _catalog_cache and now - _catalog_cache[0] < _CATALOG_TTL:
-        return _catalog_cache[1]
+    global _db
+    month_key = datetime.now().strftime("%Y-%m")
+    now = int(time.time())
+
+    if _db is not None:
+        try:
+            row = _db.execute(
+                "SELECT films_json, fetched_at FROM catalog_cache WHERE month = ?", (month_key,)
+            ).fetchone()
+            if row and now - row[1] < _CATALOG_TTL:
+                return [CatalogFilm(**f) for f in json.loads(row[0])]
+        except Exception as exc:
+            print(f"ftft cache: catalog read failed: {exc}", file=sys.stderr)
+            _db = None
+
     films = fetch_catalog()
-    _catalog_cache = (now, films)
+
+    if _db is not None:
+        try:
+            _db.execute(
+                "INSERT OR REPLACE INTO catalog_cache (month, films_json, fetched_at) VALUES (?, ?, ?)",
+                (month_key, json.dumps([f.__dict__ for f in films]), now),
+            )
+            _db.commit()
+        except Exception as exc:
+            print(f"ftft cache: catalog write failed: {exc}", file=sys.stderr)
+
     return films
 
 
+def _rating_in_cache(title: str, year: int | None) -> bool:
+    if _db is None:
+        return False
+    try:
+        now = int(time.time())
+        row = _db.execute(
+            "SELECT fetched_at FROM rating_cache WHERE title = ? AND year = ?",
+            (title, year if year is not None else -1),
+        ).fetchone()
+        return bool(row and now - row[0] < _RATING_TTL)
+    except Exception:
+        return False
+
+
 def _get_rating(source: OmdbRatingSource, title: str, year: int | None) -> RatingResult | None:
-    key = (title, year)
-    now = time.monotonic()
-    if key in _rating_cache and now - _rating_cache[key][0] < _RATING_TTL:
-        return _rating_cache[key][1]
+    global _db
+    db_year = year if year is not None else -1
+    now = int(time.time())
+
+    if _db is not None:
+        try:
+            row = _db.execute(
+                "SELECT result_json, fetched_at FROM rating_cache WHERE title = ? AND year = ?",
+                (title, db_year),
+            ).fetchone()
+            if row and now - row[1] < _RATING_TTL:
+                data = json.loads(row[0])
+                return RatingResult(**data) if data is not None else None
+        except Exception as exc:
+            print(f"ftft cache: rating read failed: {exc}", file=sys.stderr)
+            _db = None
+
     result = source.lookup(title, year)
-    _rating_cache[key] = (now, result)
+
+    if _db is not None:
+        try:
+            result_json = json.dumps(result.__dict__) if result is not None else json.dumps(None)
+            _db.execute(
+                "INSERT OR REPLACE INTO rating_cache (title, year, result_json, fetched_at) VALUES (?, ?, ?, ?)",
+                (title, db_year, result_json, now),
+            )
+            _db.commit()
+        except Exception as exc:
+            print(f"ftft cache: rating write failed: {exc}", file=sys.stderr)
+
     return result
 
 _INDEX_HTML = """<!DOCTYPE html>
@@ -122,7 +206,7 @@ async def search(
     for i, film in enumerate(films):
         try:
             # Only sleep between requests if rating not already cached
-            if i > 0 and (film.title, film.year) not in _rating_cache:
+            if i > 0 and not _rating_in_cache(film.title, film.year):
                 time.sleep(0.15)
             result = _get_rating(source, film.title, film.year)
         except urllib.error.HTTPError as exc:
