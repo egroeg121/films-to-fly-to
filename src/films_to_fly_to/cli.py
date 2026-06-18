@@ -43,17 +43,33 @@ class RankedFilm:
         if self.rating is None:
             return "No rating data available."
         score = self.rating.score
+        rt = self.rating.rt_score
         genres = self.catalog.genres
         genre_str = "/".join(genres[:2]) if genres else "film"
-        if score is None:
+        if score is None and rt is None:
             return f"A {genre_str} — no score on record."
-        if score >= 8.0:
-            return f"Critically acclaimed {genre_str} (IMDb {score:.1f})."
-        if score >= 7.0:
-            return f"Well-regarded {genre_str} (IMDb {score:.1f})."
-        if score >= 6.0:
-            return f"Decent {genre_str} (IMDb {score:.1f})."
-        return f"{genre_str.capitalize()} — take it or leave it (IMDb {score:.1f})."
+        # Use whichever score is available for the qualitative label
+        imdb_score = score if score is not None else (rt / 10.0 if rt is not None else None)
+        if imdb_score is None:
+            return f"A {genre_str} — no score on record."
+        if imdb_score >= 8.0:
+            return f"Critically acclaimed {genre_str}."
+        if imdb_score >= 7.0:
+            return f"Well-regarded {genre_str}."
+        if imdb_score >= 6.0:
+            return f"Decent {genre_str}."
+        return f"{genre_str.capitalize()} — take it or leave it."
+
+
+def _format_scores(rating: RatingResult | None) -> str:
+    if rating is None:
+        return "unrated"
+    parts = []
+    if rating.score is not None:
+        parts.append(f"IMDb {rating.score:.1f}")
+    if rating.rt_score is not None:
+        parts.append(f"RT {rating.rt_score}%")
+    return " | ".join(parts) if parts else "unrated"
 
 
 def run(flight: str, date: str, *, omdb_key: str) -> int:
@@ -102,9 +118,7 @@ def run(flight: str, date: str, *, omdb_key: str) -> int:
     print("=" * 60)
     for pos, item in enumerate(ranked, 1):
         year_str = f" ({item.catalog.year})" if item.catalog.year else ""
-        score_str = (
-            f"{item.rating.score:.1f}/10" if item.rating and item.rating.score is not None else "unrated"
-        )
+        score_str = _format_scores(item.rating)
         print(f"{pos:3}. {item.catalog.title}{year_str}  [{score_str}]")
         print(f"      {item.why_watch()}")
     print()
