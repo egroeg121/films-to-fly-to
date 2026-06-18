@@ -121,13 +121,14 @@ def test_normalise_title(raw: str, expected_norm: str, expected_year: int | None
 # ---------------------------------------------------------------------------
 
 
-def _make_result(title: str = "Test Film", year: int = 2024, imdb_id: str = "tt1234567") -> RatingResult:
+def _make_result(title: str = "Test Film", year: int = 2024, imdb_id: str = "tt1234567", **kwargs) -> RatingResult:
     return RatingResult(
         source="omdb",
         external_id=imdb_id,
         title=title,
         year=year,
-        score=7.5,
+        score=kwargs.get("score", 7.5),
+        rt_score=kwargs.get("rt_score"),
         score_raw={"imdbRating": "7.5"},
     )
 
@@ -244,27 +245,22 @@ def test_matcher_no_year_skips_drift(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# _format_scores (CLI formatting for dual scores)
+# CLI score formatting
 # ---------------------------------------------------------------------------
 
 
-def _make_format_result(**kwargs) -> RatingResult:
-    defaults = dict(source="omdb", external_id="tt123", title="Test", year=2024, score=None, rt_score=None)
-    return RatingResult(**{**defaults, **kwargs})
-
-
 def test_format_scores_both():
-    r = _make_format_result(score=7.4, rt_score=85)
+    r = _make_result(score=7.4, rt_score=85)
     assert _format_scores(r) == "IMDb 7.4 | RT 85%"
 
 
 def test_format_scores_imdb_only():
-    r = _make_format_result(score=6.5, rt_score=None)
+    r = _make_result(score=6.5, rt_score=None)
     assert _format_scores(r) == "IMDb 6.5"
 
 
 def test_format_scores_rt_only():
-    r = _make_format_result(score=None, rt_score=72)
+    r = _make_result(score=None, rt_score=72)
     assert _format_scores(r) == "RT 72%"
 
 
@@ -273,5 +269,5 @@ def test_format_scores_none_rating():
 
 
 def test_format_scores_no_scores():
-    r = _make_format_result(score=None, rt_score=None)
+    r = _make_result(score=None, rt_score=None)
     assert _format_scores(r) == "unrated"
