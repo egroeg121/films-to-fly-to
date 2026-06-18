@@ -16,11 +16,38 @@ from typing import Annotated
 from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse
 
-from films_to_fly_to.catalog import fetch_catalog
+from films_to_fly_to.catalog import CatalogFilm, fetch_catalog
 from films_to_fly_to.cli import RankedFilm
-from films_to_fly_to.ratings import OmdbRatingSource
+from films_to_fly_to.ratings import OmdbRatingSource, RatingResult
 
 app = FastAPI(title="Films to Fly To")
+
+# Simple in-memory cache with TTL
+_CATALOG_TTL = 3600.0  # 1 hour — catalog changes monthly
+_RATING_TTL = 86400.0  # 24 hours — ratings are stable
+
+_catalog_cache: tuple[float, list[CatalogFilm]] | None = None
+_rating_cache: dict[tuple[str, int | None], tuple[float, RatingResult | None]] = {}
+
+
+def _get_catalog() -> list[CatalogFilm]:
+    global _catalog_cache
+    now = time.monotonic()
+    if _catalog_cache and now - _catalog_cache[0] < _CATALOG_TTL:
+        return _catalog_cache[1]
+    films = fetch_catalog()
+    _catalog_cache = (now, films)
+    return films
+
+
+def _get_rating(source: OmdbRatingSource, title: str, year: int | None) -> RatingResult | None:
+    key = (title, year)
+    now = time.monotonic()
+    if key in _rating_cache and now - _rating_cache[key][0] < _RATING_TTL:
+        return _rating_cache[key][1]
+    result = source.lookup(title, year)
+    _rating_cache[key] = (now, result)
+    return result
 
 _INDEX_HTML = """<!DOCTYPE html>
 <html lang="en">
@@ -80,7 +107,7 @@ async def search(
         return _render_page(body, flight, date)
 
     try:
-        films = fetch_catalog()
+        films = _get_catalog()
     except urllib.error.URLError as exc:
         body = f'<p class="error">Could not fetch BA catalog: {exc}</p>'
         return _render_page(body, flight, date)
@@ -93,10 +120,11 @@ async def search(
     ranked: list[RankedFilm] = []
 
     for i, film in enumerate(films):
-        if i > 0:
-            time.sleep(0.15)
         try:
-            result = source.lookup(film.title, film.year)
+            # Only sleep between requests if rating not already cached
+            if i > 0 and (film.title, film.year) not in _rating_cache:
+                time.sleep(0.15)
+            result = _get_rating(source, film.title, film.year)
         except urllib.error.HTTPError as exc:
             if exc.code in (401, 403):
                 body = f'<p class="error">OMDb rejected API key (HTTP {exc.code}). Check OMDB_API_KEY.</p>'
