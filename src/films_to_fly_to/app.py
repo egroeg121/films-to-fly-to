@@ -22,7 +22,7 @@ from fastapi.responses import HTMLResponse
 
 from films_to_fly_to.catalog import CatalogFilm, fetch_catalog
 from films_to_fly_to.cli import RankedFilm
-from films_to_fly_to.ratings import OmdbRatingSource, RatingResult
+from films_to_fly_to.ratings import OmdbRatingSource, RatingResult, get_rating_provider
 
 app = FastAPI(title="Films to Fly To")
 
@@ -42,8 +42,9 @@ def _get_db() -> sqlite3.Connection | None:
         )
         conn.execute(
             "CREATE TABLE IF NOT EXISTS rating_cache "
-            "(title TEXT, year INTEGER, result_json TEXT, fetched_at INTEGER, "
-            "PRIMARY KEY (title, year))"
+            "(provider TEXT NOT NULL DEFAULT 'omdb', title TEXT, year INTEGER, "
+            "result_json TEXT, fetched_at INTEGER, "
+            "PRIMARY KEY (provider, title, year))"
         )
         conn.commit()
         return conn
@@ -86,14 +87,14 @@ def _get_catalog() -> list[CatalogFilm]:
     return films
 
 
-def _rating_in_cache(title: str, year: int | None) -> bool:
+def _rating_in_cache(provider: str, title: str, year: int | None) -> bool:
     if _db is None:
         return False
     try:
         now = int(time.time())
         row = _db.execute(
-            "SELECT fetched_at FROM rating_cache WHERE title = ? AND year = ?",
-            (title, year if year is not None else -1),
+            "SELECT fetched_at FROM rating_cache WHERE provider = ? AND title = ? AND year = ?",
+            (provider, title, year if year is not None else -1),
         ).fetchone()
         return bool(row and now - row[0] < _RATING_TTL)
     except Exception:
@@ -102,14 +103,16 @@ def _rating_in_cache(title: str, year: int | None) -> bool:
 
 def _get_rating(source: OmdbRatingSource, title: str, year: int | None) -> RatingResult | None:
     global _db
+    provider = getattr(source, "name", "omdb")
     db_year = year if year is not None else -1
     now = int(time.time())
 
     if _db is not None:
         try:
             row = _db.execute(
-                "SELECT result_json, fetched_at FROM rating_cache WHERE title = ? AND year = ?",
-                (title, db_year),
+                "SELECT result_json, fetched_at FROM rating_cache "
+                "WHERE provider = ? AND title = ? AND year = ?",
+                (provider, title, db_year),
             ).fetchone()
             if row and now - row[1] < _RATING_TTL:
                 data = json.loads(row[0])
@@ -124,8 +127,9 @@ def _get_rating(source: OmdbRatingSource, title: str, year: int | None) -> Ratin
         try:
             result_json = json.dumps(result.__dict__) if result is not None else json.dumps(None)
             _db.execute(
-                "INSERT OR REPLACE INTO rating_cache (title, year, result_json, fetched_at) VALUES (?, ?, ?, ?)",
-                (title, db_year, result_json, now),
+                "INSERT OR REPLACE INTO rating_cache "
+                "(provider, title, year, result_json, fetched_at) VALUES (?, ?, ?, ?, ?)",
+                (provider, title, db_year, result_json, now),
             )
             _db.commit()
         except Exception as exc:
@@ -185,8 +189,9 @@ async def search(
     flight: Annotated[str, Form()],
     date: Annotated[str, Form()],
 ):
+    provider_name = os.environ.get("FTFT_RATING_PROVIDER", "omdb")
     omdb_key = os.environ.get("OMDB_API_KEY")
-    if not omdb_key:
+    if provider_name == "omdb" and not omdb_key:
         body = '<p class="error">OMDB_API_KEY is not set. Set it in your environment and restart the server.</p>'
         return _render_page(body, flight, date)
 
@@ -200,13 +205,14 @@ async def search(
         body = '<p class="error">BA catalog is behind a holding page or empty. Try again later.</p>'
         return _render_page(body, flight, date)
 
-    source = OmdbRatingSource(omdb_key)
+    kwargs = {"api_key": omdb_key} if provider_name == "omdb" else {}
+    source = get_rating_provider(provider_name, **kwargs)
     ranked: list[RankedFilm] = []
 
     for i, film in enumerate(films):
         try:
             # Only sleep between requests if rating not already cached
-            if i > 0 and not _rating_in_cache(film.title, film.year):
+            if i > 0 and not _rating_in_cache(provider_name, film.title, film.year):
                 time.sleep(0.15)
             result = _get_rating(source, film.title, film.year)
         except urllib.error.HTTPError as exc:

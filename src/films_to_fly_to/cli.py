@@ -25,7 +25,7 @@ import urllib.error
 from dataclasses import dataclass
 
 from films_to_fly_to.catalog import CatalogFilm, fetch_catalog
-from films_to_fly_to.ratings import OmdbRatingSource, RatingResult
+from films_to_fly_to.ratings import OmdbRatingSource, RatingResult, get_rating_provider
 
 
 @dataclass
@@ -72,7 +72,7 @@ def _format_scores(rating: RatingResult | None) -> str:
     return " | ".join(parts) if parts else "unrated"
 
 
-def run(flight: str, date: str, *, omdb_key: str) -> int:
+def run(flight: str, date: str, *, omdb_key: str, provider_name: str = "omdb") -> int:
     print(f"Fetching BA catalog for {flight} on {date}...", file=sys.stderr)
 
     try:
@@ -89,9 +89,10 @@ def run(flight: str, date: str, *, omdb_key: str) -> int:
         return 1
 
     print(f"  {len(films)} films in catalog.", file=sys.stderr)
-    print("Fetching ratings from OMDb...", file=sys.stderr)
+    print(f"Fetching ratings from {provider_name}...", file=sys.stderr)
 
-    source = OmdbRatingSource(omdb_key)
+    kwargs = {"api_key": omdb_key} if provider_name == "omdb" else {}
+    source = get_rating_provider(provider_name, **kwargs)
     ranked: list[RankedFilm] = []
 
     for i, film in enumerate(films):
@@ -136,12 +137,13 @@ def main(argv: list[str] | None = None) -> int:
 
     flight, date = argv
 
+    provider_name = os.environ.get("FTFT_RATING_PROVIDER", "omdb")
     omdb_key = os.environ.get("OMDB_API_KEY")
-    if not omdb_key:
+    if provider_name == "omdb" and not omdb_key:
         print("error: set OMDB_API_KEY in the environment", file=sys.stderr)
         return 2
 
-    return run(flight, date, omdb_key=omdb_key)
+    return run(flight, date, omdb_key=omdb_key or "", provider_name=provider_name)
 
 
 if __name__ == "__main__":

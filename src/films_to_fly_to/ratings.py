@@ -1,10 +1,9 @@
-"""OMDb rating source with title normalisation and retry ladder.
+"""Rating providers: pluggable RatingProvider protocol with registry.
 
-Adapted from prototypes/rating_source/title_matcher.py.
 Strategy (see docs/decisions/0002-title-matching.md):
   1. Normalise title (lowercase, strip punctuation, move trailing articles)
   2. Extract inline year from title strings like 'Dune (2021)'
-  3. Query OMDb with normalised title + year
+  3. Query provider with normalised title + year
   4. Retry with year ±1 for release-date drift
   5. Retry without year constraint
   6. Retry as type=series (TV content in BA catalog)
@@ -37,15 +36,21 @@ _WHITESPACE = re.compile(r"\s+")
 @dataclass
 class RatingResult:
     source: str
-    external_id: str
+    external_id: str | None
     title: str
     year: int | None
     score: float | None
     rt_score: int | None = None  # Rotten Tomatoes percentage (0–100), if available
     score_raw: dict = field(default_factory=dict)
+    imdb_score: float | None = None
+    rt_percent: int | None = None
+    metacritic: int | None = None
+    letterboxd: float | None = None
 
 
-class RatingSource(Protocol):
+class RatingProvider(Protocol):
+    name: str
+
     def lookup(self, title: str, year: int | None) -> RatingResult | None: ...
 
 
@@ -93,6 +98,8 @@ def normalise_title(raw: str) -> tuple[str, int | None]:
 
 
 class OmdbRatingSource:
+    name = "omdb"
+
     def __init__(self, api_key: str, *, timeout: float = 10.0) -> None:
         self._api_key = api_key
         self._timeout = timeout
@@ -119,6 +126,10 @@ class OmdbRatingSource:
         if payload.get("Response") != "True":
             return None
 
+        imdb_score = _parse_imdb_score(payload.get("imdbRating"))
+        rt_percent = _parse_rt_percent(payload.get("Ratings", []))
+        metacritic = _parse_metacritic(payload.get("Metascore"))
+
         return RatingResult(
             source="omdb",
             external_id=payload["imdbID"],
@@ -131,6 +142,9 @@ class OmdbRatingSource:
                 "Ratings": payload.get("Ratings"),
                 "Metascore": payload.get("Metascore"),
             },
+            imdb_score=imdb_score,
+            rt_percent=rt_percent,
+            metacritic=metacritic,
         )
 
     def fetch_by_id(self, imdb_id: str) -> RatingResult | None:
@@ -140,6 +154,11 @@ class OmdbRatingSource:
             payload = json.loads(resp.read().decode("utf-8"))
         if payload.get("Response") != "True":
             return None
+
+        imdb_score = _parse_imdb_score(payload.get("imdbRating"))
+        rt_percent = _parse_rt_percent(payload.get("Ratings", []))
+        metacritic = _parse_metacritic(payload.get("Metascore"))
+
         return RatingResult(
             source="omdb",
             external_id=payload["imdbID"],
@@ -151,7 +170,35 @@ class OmdbRatingSource:
                 "Ratings": payload.get("Ratings"),
                 "Metascore": payload.get("Metascore"),
             },
+            imdb_score=imdb_score,
+            rt_percent=rt_percent,
+            metacritic=metacritic,
         )
+
+
+class TmdbRatingSource:
+    """TMDB rating provider stub — not yet implemented."""
+
+    name = "tmdb"
+
+    def __init__(self, **kwargs) -> None:
+        pass
+
+    def lookup(self, title: str, year: int | None) -> RatingResult | None:
+        raise NotImplementedError("TMDB provider is not yet implemented")
+
+
+RATING_PROVIDERS: dict[str, type] = {
+    "omdb": OmdbRatingSource,
+    "tmdb": TmdbRatingSource,
+}
+
+
+def get_rating_provider(name: str, **kwargs) -> RatingProvider:
+    cls = RATING_PROVIDERS.get(name)
+    if cls is None:
+        raise ValueError(f"Unknown rating provider: {name!r}. Available: {list(RATING_PROVIDERS)}")
+    return cls(**kwargs)
 
 
 class TitleCache:
@@ -178,12 +225,12 @@ class TitleCache:
 
 
 class TitleMatcher:
-    """Map raw BA catalog titles to RatingResults via OMDb, with caching.
+    """Map raw BA catalog titles to RatingResults via a RatingProvider, with caching.
 
     Resolution order:
       1. Normalise title and extract inline year.
       2. Cache hit: fetch by imdbID and return immediately.
-      3. OMDb lookup: normalised title + year, type=movie.
+      3. Provider lookup: normalised title + year, type=movie.
       4. Year drift ±1 (only when year is known).
       5. No-year fallback (only when year was known and all year-pinned calls failed).
       6. type=series retry.
@@ -247,6 +294,15 @@ class TitleMatcher:
         return None, None
 
 
+def _parse_imdb_score(value: str | None) -> float | None:
+    if value and value != "N/A":
+        try:
+            return float(value)
+        except ValueError:
+            pass
+    return None
+
+
 def _pick_rt_score(payload: dict) -> int | None:
     """Return the Rotten Tomatoes score as an integer percentage (0–100), or None."""
     for entry in payload.get("Ratings", []):
@@ -257,6 +313,27 @@ def _pick_rt_score(payload: dict) -> int | None:
             except ValueError:
                 continue
     return None
+
+
+def _parse_rt_percent(ratings: list) -> int | None:
+    for entry in ratings:
+        if entry.get("Source") == "Rotten Tomatoes":
+            value = entry.get("Value", "").rstrip("%")
+            try:
+                return int(value)
+            except ValueError:
+                continue
+    return None
+
+
+def _parse_metacritic(value: str | None) -> int | None:
+    if value and value != "N/A":
+        try:
+            return int(value)
+        except ValueError:
+            pass
+    return None
+
 
 
 def _pick_score(payload: dict) -> float | None:
