@@ -41,6 +41,7 @@ class RatingResult:
     title: str
     year: int | None
     score: float | None
+    rt_score: int | None = None  # Rotten Tomatoes percentage (0–100), if available
     score_raw: dict = field(default_factory=dict)
 
 
@@ -124,6 +125,7 @@ class OmdbRatingSource:
             title=payload.get("Title", title),
             year=_safe_int(payload.get("Year")),
             score=_pick_score(payload),
+            rt_score=_pick_rt_score(payload),
             score_raw={
                 "imdbRating": payload.get("imdbRating"),
                 "Ratings": payload.get("Ratings"),
@@ -243,6 +245,18 @@ class TitleMatcher:
             return r, "type=series"
 
         return None, None
+
+
+def _pick_rt_score(payload: dict) -> int | None:
+    """Return the Rotten Tomatoes score as an integer percentage (0–100), or None."""
+    for entry in payload.get("Ratings", []):
+        if entry.get("Source") == "Rotten Tomatoes":
+            value = entry.get("Value", "").rstrip("%")
+            try:
+                return int(value)
+            except ValueError:
+                continue
+    return None
 
 
 def _pick_score(payload: dict) -> float | None:
