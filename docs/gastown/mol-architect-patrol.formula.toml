@@ -1,0 +1,190 @@
+description = """
+Architect patrol loop — autonomous backlog decomposition (ftft-yjf).
+
+The Architect turns vague/large open beads into sets of small, executable leaf
+beads. It NEVER marks work ready — that is the Engineer's gate. Communication
+with the Engineer is async and beads-based: the Architect submits a
+decomposition (label arch:pending-review) and moves on; the Engineer reviews in
+a later cycle and either approves or bounces back via parent-bead feedback.
+
+## State machine (labels on the PARENT bead — single source of truth)
+
+  arch:needs-decomposition  vague/large, awaiting Architect
+  arch:decomposing          Architect actively working it (claim)
+  arch:pending-review       decomposed, awaiting Engineer
+  arch:changes-requested    Engineer bounced it; Architect must iterate
+  arch:approved             Engineer approved; leaves ready to sling
+  arch:escalated            3 rounds exhausted; needs a human
+
+Round count: label arch:round:N on the parent (survives session death).
+Leaf beads: label arch:leaf + `bd dep add <leaf> <parent>` (leaf needs parent).
+
+## Principles
+
+- Discovery over tracking: all state is labels/deps on beads, nothing in-session.
+- Beads over mail: durable content lives on the bead; mail/nudge is only a doorbell.
+- Bounded iteration: max 3 rounds, then escalate to a human (Mayor).
+- The Architect AUTHORS; it never declares its own work ready.
+
+## Idle behaviour
+
+Woken by await-signal on beads activity with exponential backoff (effort tuning),
+with an hourly floor so a quiet backlog still gets swept. When EFFORT: reduced,
+run an abbreviated cycle: intake-scan only, skip decomposition unless a
+changes-requested bead is waiting.
+"""
+
+[[steps]]
+id = 'intake-scan'
+title = 'Find vague beads and tag them for decomposition'
+description = """
+Identify candidate beads that need decomposition and tag them.
+
+A candidate is an OPEN bead that:
+- has NO children (no beads depending on it as parent context), AND
+- has a short description (heuristic: < ~200 chars or no acceptance criteria), AND
+- is NOT already labelled arch:* .
+
+```bash
+bd list --status=open --json --limit=0
+```
+
+For each candidate, tag it:
+```bash
+bd update <id> --labels arch:needs-decomposition
+```
+
+Humans may also pre-tag beads with arch:needs-decomposition. Treat those
+identically. Log a count of newly-tagged candidates.
+
+If EFFORT: reduced, run ONLY this step plus pick-work for any waiting
+arch:changes-requested bead, then go to loop-or-exit.
+"""
+
+[[steps]]
+id = 'pick-work'
+title = 'Claim one bead to decompose'
+needs = ['intake-scan']
+description = """
+Pick ONE parent bead to work this cycle. Priority order:
+1. arch:changes-requested (Engineer is waiting on a revision — clear these first)
+2. arch:needs-decomposition (fresh work)
+
+```bash
+bd list --label arch:changes-requested --status=open --json
+bd list --label arch:needs-decomposition --status=open --json
+```
+
+Claim it:
+```bash
+bd update <parent> --labels arch:decomposing
+# (remove the previous arch:needs-decomposition / arch:changes-requested label)
+```
+
+If NOTHING is waiting, skip to loop-or-exit (nothing to decompose this cycle).
+
+Read the parent fully, plus any prior feedback:
+```bash
+bd show <parent>          # description + any --design feedback from Engineer
+```
+"""
+
+[[steps]]
+id = 'assess-complexity'
+title = 'Decide decomposition model (Sonnet vs Opus)'
+needs = ['pick-work']
+description = """
+Self-assess whether this bead's decomposition needs design judgement.
+
+- Judgement-heavy (ambiguous scope, architecture trade-offs, cross-cutting,
+  multiple plausible designs) → escalate the decomposition to an Opus sub-agent:
+  ```bash
+  gt sling <parent> films_to_fly_to --agent jasper --merge=local
+  ```
+  (or hand the decomposition to a jasper Agent sub-task) and let it produce the
+  child beads, then continue at engineer-handoff.
+- Straightforward (obvious sub-tasks, clear scope) → decompose inline on the
+  current Sonnet session.
+
+State the call in one line so it's auditable.
+"""
+
+[[steps]]
+id = 'decompose'
+title = 'Create executable child beads'
+needs = ['assess-complexity']
+description = """
+Break the parent into child (leaf) beads. EACH child MUST have:
+
+- a clear title,
+- description >= 200 chars with enough context to execute BLIND (no questions),
+- a size estimate of <= 2h polecat work,
+- testable acceptance criteria (objectively verifiable),
+- correct dependencies.
+
+```bash
+bd create --title "..." --type=task --priority=2 \\
+  --description "<200+ chars: context, what to do, acceptance criteria, est: <=2h>" \\
+  --labels arch:leaf
+# Link leaf to parent context (leaf NEEDS parent — requirement direction):
+bd dep add <leaf> <parent>
+# Order leaves among themselves where needed (X needs Y), verify:
+bd dep add <leafB> <leafA>
+bd blocked    # confirm the intended order; temporal language inverts deps
+```
+
+If this is a revision (arch:changes-requested), address each itemised point in
+the Engineer's feedback: split too-large leaves, add missing context to vague
+ones, make untestable criteria testable. Do not silently re-submit unchanged.
+"""
+
+[[steps]]
+id = 'engineer-handoff'
+title = 'Submit decomposition for Engineer review'
+needs = ['decompose']
+description = """
+Mark the decomposition ready for review and bump the round counter.
+
+```bash
+# Read current round (arch:round:N) and increment; default round 1:
+bd update <parent> --labels arch:pending-review,arch:round:<N>
+# (remove arch:decomposing)
+```
+
+Persist a short submission note on the parent so the Engineer (and any future
+session) can see what was done this round:
+```bash
+bd update <parent> --notes "ROUND <N> SUBMITTED: <K> leaves created: <ids>. <summary>"
+```
+
+Doorbell the Engineer (cheap nudge — durable content is on the bead):
+```bash
+gt nudge films_to_fly_to/engineer "Decomposition ready for review: <parent> (round <N>)"
+```
+
+NEVER set the parent or leaves ready here. That is the Engineer's gate.
+"""
+
+[[steps]]
+id = 'loop-or-exit'
+title = 'Await beads activity, then loop or hand off'
+needs = ['engineer-handoff']
+description = """
+End of cycle.
+
+If context LOW — resolve your agent bead and await activity with backoff:
+```bash
+gt mol step await-signal --agent-bead ftft-films_to_fly_to-architect \\
+  --backoff-base 60s --backoff-mult 2 --backoff-max 1h
+```
+On signal (beads activity, e.g. a new vague bead or an Engineer bounce): reset
+idle counter and start the next cycle. On timeout: next cycle runs abbreviated
+(EFFORT: reduced) per the idle rules above.
+
+If context HIGH — hand off so a fresh session continues from beads state:
+```bash
+gt handoff -s "Architect patrol handoff" -m "Backlog state: <arch:* counts>. In-flight: <parent ids>."
+```
+
+Never leave the session idle without awaiting or handing off.
+"""
