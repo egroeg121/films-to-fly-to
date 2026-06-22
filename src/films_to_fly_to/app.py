@@ -245,8 +245,9 @@ async def search(
         else:
             badge_cls, badge_txt = "badge-unrated", "NR"
 
+        safe_title = html_lib.escape(item.catalog.title)
         if item.catalog.poster_url:
-            poster_html = f'<img src="{item.catalog.poster_url}" alt="{item.catalog.title}" loading="lazy">'
+            poster_html = f'<img src="{item.catalog.poster_url}" alt="{safe_title}" loading="lazy">'
         else:
             poster_html = '<div class="poster-placeholder">🎬</div>'
 
@@ -266,7 +267,7 @@ async def search(
             f'<span class="badge {badge_cls}">{badge_txt}</span>'
             f'</div>'
             f'<div class="card-body">'
-            f'<div class="card-title">{item.catalog.title}</div>'
+            f'<div class="card-title">{safe_title}</div>'
             f'{year_html}'
             f'</div>'
             f'{tag_close}'
