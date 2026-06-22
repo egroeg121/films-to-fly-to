@@ -225,3 +225,7 @@ state.json
 CLAUDE.md
 CLAUDE.local.md
 .playwright-mcp/
+
+# Gas Town (added by gt)
+.opencode/
+GEMINI.md
