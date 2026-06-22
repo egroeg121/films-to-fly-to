@@ -159,6 +159,18 @@ _INDEX_HTML = """<!DOCTYPE html>
   .why {{ color: #555; font-size: 0.9rem; margin-left: 3rem; }}
   .error {{ color: #c00; padding: 1rem; background: #fff0f0; border-radius: 4px; }}
   .info {{ color: #555; font-size: 0.9rem; margin-bottom: 1rem; }}
+  .filters {{ margin-bottom: 1.25rem; display: flex; flex-direction: column; gap: 0.5rem; }}
+  .filter-row {{ display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }}
+  .filter-label {{ font-size: 0.8rem; color: #888; min-width: 5rem; }}
+  .pill {{
+    padding: 0.25rem 0.65rem; border: 1px solid #ccc; border-radius: 999px;
+    font-size: 0.8rem; cursor: pointer; background: #fff; user-select: none;
+    transition: background 0.1s, color 0.1s, border-color 0.1s;
+  }}
+  .pill:hover {{ border-color: #1a1a2e; }}
+  .pill.active {{ background: #1a1a2e; color: #fff; border-color: #1a1a2e; }}
+  .film-card.hidden {{ display: none; }}
+  #filter-count {{ font-size: 0.85rem; color: #888; margin-bottom: 0.5rem; }}
 </style>
 </head>
 <body>
@@ -226,14 +238,66 @@ async def search(
 
     ranked.sort(key=lambda r: r.sort_key, reverse=True)
 
+    # Collect filter values from all films
+    all_genres: list[str] = sorted(
+        {g for item in ranked for g in (item.catalog.genres or [])}
+    )
+    all_ratings: list[str] = sorted(
+        {item.catalog.rating for item in ranked if item.catalog.rating}
+    )
+
+    def _decade(year: int | None) -> str:
+        if year is None:
+            return ""
+        if year < 2000:
+            return "Pre-2000"
+        if year < 2010:
+            return "2000s"
+        if year < 2020:
+            return "2010s"
+        return "2020s"
+
     rows = [f'<p class="info">BA {flight} · {date} · {len(ranked)} films</p>']
+
+    # Filter bar HTML (populated by JS for genres; static for decade/rating)
+    genre_pills = "".join(
+        f'<span class="pill" data-group="genre" data-value="{_esc(g)}">{_esc(g)}</span>'
+        for g in all_genres
+    )
+    decade_pills = "".join(
+        f'<span class="pill" data-group="decade" data-value="{d}">{d}</span>'
+        for d in ["Pre-2000", "2000s", "2010s", "2020s"]
+        if d in {_decade(item.catalog.year) for item in ranked}
+    )
+    rating_pills = "".join(
+        f'<span class="pill" data-group="rating" data-value="{_esc(r)}">{_esc(r)}</span>'
+        for r in all_ratings
+    )
+
+    filter_bar = (
+        '<div class="filters" id="filters">'
+        + (f'<div class="filter-row"><span class="filter-label">Genre</span>{genre_pills}</div>' if genre_pills else "")
+        + (f'<div class="filter-row"><span class="filter-label">Decade</span>{decade_pills}</div>' if decade_pills else "")
+        + (f'<div class="filter-row"><span class="filter-label">Rating</span>{rating_pills}</div>' if rating_pills else "")
+        + "</div>"
+        + '<div id="filter-count"></div>'
+    )
+    rows.append(filter_bar)
+
     for pos, item in enumerate(ranked, 1):
         year_str = f'<span class="year">({item.catalog.year})</span>' if item.catalog.year else ""
         if item.rating and item.rating.score is not None:
             score_str = f'<span class="score">{item.rating.score:.1f}</span>'
         else:
             score_str = '<span class="unrated">unrated</span>'
+        genres_attr = _esc(json.dumps(item.catalog.genres or []))
+        decade_attr = _esc(_decade(item.catalog.year))
+        rating_attr = _esc(item.catalog.rating or "")
         rows.append(
+            f'<div class="film-card"'
+            f' data-genres=\'{genres_attr}\''
+            f' data-decade="{decade_attr}"'
+            f' data-rating="{rating_attr}">'
             f'<div class="film">'
             f'<span class="rank">{pos}.</span>'
             f'<span class="title">{item.catalog.title}</span>'
@@ -241,7 +305,68 @@ async def search(
             f'{score_str}'
             f'</div>'
             f'<div class="why">{item.why_watch()}</div>'
+            f'</div>'
         )
 
+    rows.append(_FILTER_JS)
     body = "\n".join(rows)
     return _render_page(body, flight, date)
+
+
+def _esc(s: str) -> str:
+    """HTML-escape a string for use in attribute values."""
+    return s.replace("&", "&amp;").replace('"', "&quot;").replace("'", "&#39;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+_FILTER_JS = """<script>
+(function () {
+  var active = { genre: new Set(), decade: new Set(), rating: new Set() };
+
+  function applyFilters() {
+    var cards = document.querySelectorAll('.film-card');
+    var visible = 0;
+    cards.forEach(function (card) {
+      var genres = JSON.parse(card.dataset.genres || '[]');
+      var decade = card.dataset.decade || '';
+      var rating = card.dataset.rating || '';
+
+      var passGenre = active.genre.size === 0 || genres.some(function (g) { return active.genre.has(g); });
+      var passDecade = active.decade.size === 0 || active.decade.has(decade);
+      var passRating = active.rating.size === 0 || active.rating.has(rating);
+
+      if (passGenre && passDecade && passRating) {
+        card.classList.remove('hidden');
+        visible++;
+      } else {
+        card.classList.add('hidden');
+      }
+    });
+    var countEl = document.getElementById('filter-count');
+    if (countEl) {
+      countEl.textContent = visible < cards.length ? (visible + ' of ' + cards.length + ' films') : '';
+    }
+  }
+
+  document.querySelectorAll('#filters .pill').forEach(function (pill) {
+    pill.addEventListener('click', function () {
+      var group = pill.dataset.group;
+      var value = pill.dataset.value;
+      if (active[group].has(value)) {
+        active[group].delete(value);
+        pill.classList.remove('active');
+      } else {
+        // decade and rating are single-select (radio behaviour); genre is multi-select
+        if (group !== 'genre') {
+          active[group].clear();
+          document.querySelectorAll('#filters .pill[data-group="' + group + '"]').forEach(function (p) {
+            p.classList.remove('active');
+          });
+        }
+        active[group].add(value);
+        pill.classList.add('active');
+      }
+      applyFilters();
+    });
+  });
+}());
+</script>"""
