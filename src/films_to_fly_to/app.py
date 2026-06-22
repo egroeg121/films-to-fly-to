@@ -144,21 +144,29 @@ _INDEX_HTML = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Films to Fly To</title>
 <style>
-  body {{ font-family: system-ui, sans-serif; max-width: 800px; margin: 2rem auto; padding: 0 1rem; }}
-  h1 {{ color: #1a1a2e; }}
-  form {{ display: flex; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 2rem; }}
-  input {{ padding: 0.5rem; border: 1px solid #ccc; border-radius: 4px; font-size: 1rem; }}
-  button {{ padding: 0.5rem 1.25rem; background: #1a1a2e; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 1rem; }}
-  button:hover {{ background: #2d2d5e; }}
-  .film {{ border-bottom: 1px solid #eee; padding: 0.75rem 0; display: flex; align-items: baseline; gap: 0.5rem; }}
-  .rank {{ color: #888; min-width: 2.5rem; text-align: right; }}
-  .title {{ font-weight: 600; }}
-  .year {{ color: #888; font-size: 0.9rem; }}
-  .score {{ margin-left: auto; font-weight: 700; color: #1a6e1a; }}
-  .unrated {{ color: #888; }}
-  .why {{ color: #555; font-size: 0.9rem; margin-left: 3rem; }}
-  .error {{ color: #c00; padding: 1rem; background: #fff0f0; border-radius: 4px; }}
-  .info {{ color: #555; font-size: 0.9rem; margin-bottom: 1rem; }}
+  *, *::before, *::after {{ box-sizing: border-box; }}
+  body {{ font-family: system-ui, sans-serif; background: #0d1117; color: #e6edf3; margin: 0; padding: 1.5rem 2rem; }}
+  h1 {{ color: #e6edf3; margin: 0 0 1.25rem; font-size: 1.6rem; letter-spacing: -0.02em; }}
+  form {{ display: flex; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 1.75rem; }}
+  input {{ padding: 0.5rem 0.75rem; background: #161b22; border: 1px solid #30363d; border-radius: 6px; font-size: 1rem; color: #e6edf3; }}
+  input::placeholder {{ color: #8b949e; }}
+  button {{ padding: 0.5rem 1.25rem; background: #1f6feb; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 1rem; font-weight: 600; }}
+  button:hover {{ background: #388bfd; }}
+  .info {{ color: #8b949e; font-size: 0.875rem; margin-bottom: 1.25rem; }}
+  .grid {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 1.25rem; }}
+  .card {{ background: #161b22; border: 1px solid #30363d; border-radius: 8px; overflow: hidden; cursor: pointer; transition: transform 0.15s, box-shadow 0.15s; text-decoration: none; color: inherit; display: flex; flex-direction: column; }}
+  .card:hover {{ transform: translateY(-3px); box-shadow: 0 8px 24px rgba(0,0,0,0.4); border-color: #58a6ff; }}
+  .poster-wrap {{ position: relative; aspect-ratio: 2/3; background: #21262d; overflow: hidden; }}
+  .poster-wrap img {{ width: 100%; height: 100%; object-fit: cover; display: block; }}
+  .poster-placeholder {{ width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; font-size: 2.5rem; color: #30363d; }}
+  .badge {{ position: absolute; top: 6px; right: 6px; padding: 2px 7px; border-radius: 12px; font-size: 0.78rem; font-weight: 700; line-height: 1.4; }}
+  .badge-good {{ background: #1a7f37; color: #fff; }}
+  .badge-decent {{ background: #9a6700; color: #fff; }}
+  .badge-unrated {{ background: #21262d; color: #8b949e; border: 1px solid #30363d; }}
+  .card-body {{ padding: 0.6rem 0.75rem 0.75rem; flex: 1; display: flex; flex-direction: column; gap: 0.2rem; }}
+  .card-title {{ font-size: 0.85rem; font-weight: 600; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }}
+  .card-year {{ font-size: 0.78rem; color: #8b949e; }}
+  .error {{ color: #f85149; padding: 1rem; background: #161b22; border: 1px solid #da3633; border-radius: 6px; }}
 </style>
 </head>
 <body>
@@ -226,22 +234,43 @@ async def search(
 
     ranked.sort(key=lambda r: r.sort_key, reverse=True)
 
-    rows = [f'<p class="info">BA {flight} · {date} · {len(ranked)} films</p>']
-    for pos, item in enumerate(ranked, 1):
-        year_str = f'<span class="year">({item.catalog.year})</span>' if item.catalog.year else ""
-        if item.rating and item.rating.score is not None:
-            score_str = f'<span class="score">{item.rating.score:.1f}</span>'
+    cards = [f'<p class="info">BA {flight} · {date} · {len(ranked)} films</p><div class="grid">']
+    for item in ranked:
+        score = item.rating.score if item.rating and item.rating.score is not None else None
+        if score is not None and score >= 7.0:
+            badge_cls, badge_txt = "badge-good", f"{score:.1f}"
+        elif score is not None:
+            badge_cls, badge_txt = "badge-decent", f"{score:.1f}"
         else:
-            score_str = '<span class="unrated">unrated</span>'
-        rows.append(
-            f'<div class="film">'
-            f'<span class="rank">{pos}.</span>'
-            f'<span class="title">{item.catalog.title}</span>'
-            f'{year_str}'
-            f'{score_str}'
-            f'</div>'
-            f'<div class="why">{item.why_watch()}</div>'
-        )
+            badge_cls, badge_txt = "badge-unrated", "NR"
 
-    body = "\n".join(rows)
+        if item.catalog.poster_url:
+            poster_html = f'<img src="{item.catalog.poster_url}" alt="{item.catalog.title}" loading="lazy">'
+        else:
+            poster_html = '<div class="poster-placeholder">🎬</div>'
+
+        year_html = f'<div class="card-year">{item.catalog.year}</div>' if item.catalog.year else ""
+
+        if item.catalog.detail_url:
+            tag_open = f'<a class="card" href="{item.catalog.detail_url}" target="_blank" rel="noopener">'
+            tag_close = "</a>"
+        else:
+            tag_open = '<div class="card">'
+            tag_close = "</div>"
+
+        cards.append(
+            f'{tag_open}'
+            f'<div class="poster-wrap">'
+            f'{poster_html}'
+            f'<span class="badge {badge_cls}">{badge_txt}</span>'
+            f'</div>'
+            f'<div class="card-body">'
+            f'<div class="card-title">{item.catalog.title}</div>'
+            f'{year_html}'
+            f'</div>'
+            f'{tag_close}'
+        )
+    cards.append("</div>")
+
+    body = "\n".join(cards)
     return _render_page(body, flight, date)
