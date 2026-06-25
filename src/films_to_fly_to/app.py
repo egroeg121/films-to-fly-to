@@ -21,7 +21,8 @@ from typing import Annotated
 from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse
 
-from films_to_fly_to.catalog import CatalogFilm, fetch_catalog
+from films_to_fly_to.catalog import CatalogFilm
+from films_to_fly_to.catalogs import airline_name_for_flight, get_catalog_for_flight
 from films_to_fly_to.cli import RankedFilm
 from films_to_fly_to.ratings import OmdbRatingSource, RatingResult, get_rating_provider
 
@@ -57,9 +58,10 @@ def _get_db() -> sqlite3.Connection | None:
 _db: sqlite3.Connection | None = _get_db()
 
 
-def _get_catalog() -> list[CatalogFilm]:
+def _get_catalog(flight: str) -> list[CatalogFilm]:
     global _db
-    month_key = datetime.now().strftime("%Y-%m")
+    prefix = flight[:2].upper()
+    month_key = f"{prefix}-{datetime.now().strftime('%Y-%m')}"
     now = int(time.time())
 
     if _db is not None:
@@ -73,7 +75,7 @@ def _get_catalog() -> list[CatalogFilm]:
             print(f"ftft cache: catalog read failed: {exc}", file=sys.stderr)
             _db = None
 
-    films = fetch_catalog()
+    films = get_catalog_for_flight(flight)
 
     if _db is not None:
         try:
@@ -204,14 +206,21 @@ async def search(
         body = '<p class="error">OMDB_API_KEY is not set. Set it in your environment and restart the server.</p>'
         return _render_page(body, flight, date)
 
+    airline = airline_name_for_flight(flight)
     try:
-        films = _get_catalog()
+        films = _get_catalog(flight)
+    except ValueError as exc:
+        body = f'<p class="error">{exc}</p>'
+        return _render_page(body, flight, date)
+    except NotImplementedError as exc:
+        body = f'<p class="error">{exc}</p>'
+        return _render_page(body, flight, date)
     except urllib.error.URLError as exc:
-        body = f'<p class="error">Could not fetch BA catalog: {exc}</p>'
+        body = f'<p class="error">Could not fetch {airline} catalog: {exc}</p>'
         return _render_page(body, flight, date)
 
     if not films:
-        body = '<p class="error">BA catalog is behind a holding page or empty. Try again later.</p>'
+        body = f'<p class="error">{airline} catalog is behind a holding page or empty. Try again later.</p>'
         return _render_page(body, flight, date)
 
     kwargs = {"api_key": omdb_key} if provider_name == "omdb" else {}
@@ -235,7 +244,7 @@ async def search(
 
     ranked.sort(key=lambda r: r.sort_key, reverse=True)
 
-    cards = [f'<p class="info">BA {flight} · {date} · {len(ranked)} films</p><div class="grid">']
+    cards = [f'<p class="info">{airline} {flight} · {date} · {len(ranked)} films</p><div class="grid">']
     for item in ranked:
         score = item.rating.score if item.rating and item.rating.score is not None else None
         if score is not None and score >= 7.0:
