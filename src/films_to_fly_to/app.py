@@ -21,6 +21,12 @@ from typing import Annotated
 from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse
 
+from films_to_fly_to.airlines import (
+    SUPPORTED_AIRLINES,
+    Airline,
+    airline_for_flight,
+    get_airline,
+)
 from films_to_fly_to.catalog import CatalogFilm, fetch_catalog
 from films_to_fly_to.cli import RankedFilm
 from films_to_fly_to.ratings import OmdbRatingSource, RatingResult, get_rating_provider
@@ -50,7 +56,10 @@ def _get_db() -> sqlite3.Connection | None:
         conn.commit()
         return conn
     except Exception as exc:
-        print(f"ftft cache: DB unavailable, falling back to live fetch: {exc}", file=sys.stderr)
+        print(
+            f"ftft cache: DB unavailable, falling back to live fetch: {exc}",
+            file=sys.stderr,
+        )
         return None
 
 
@@ -65,7 +74,8 @@ def _get_catalog() -> list[CatalogFilm]:
     if _db is not None:
         try:
             row = _db.execute(
-                "SELECT films_json, fetched_at FROM catalog_cache WHERE month = ?", (month_key,)
+                "SELECT films_json, fetched_at FROM catalog_cache WHERE month = ?",
+                (month_key,),
             ).fetchone()
             if row and now - row[1] < _CATALOG_TTL:
                 return [CatalogFilm(**f) for f in json.loads(row[0])]
@@ -102,7 +112,9 @@ def _rating_in_cache(provider: str, title: str, year: int | None) -> bool:
         return False
 
 
-def _get_rating(source: OmdbRatingSource, title: str, year: int | None) -> RatingResult | None:
+def _get_rating(
+    source: OmdbRatingSource, title: str, year: int | None
+) -> RatingResult | None:
     global _db
     provider = getattr(source, "name", "omdb")
     db_year = year if year is not None else -1
@@ -126,7 +138,9 @@ def _get_rating(source: OmdbRatingSource, title: str, year: int | None) -> Ratin
 
     if _db is not None:
         try:
-            result_json = json.dumps(result.__dict__) if result is not None else json.dumps(None)
+            result_json = (
+                json.dumps(result.__dict__) if result is not None else json.dumps(None)
+            )
             _db.execute(
                 "INSERT OR REPLACE INTO rating_cache "
                 "(provider, title, year, result_json, fetched_at) VALUES (?, ?, ?, ?, ?)",
@@ -138,6 +152,7 @@ def _get_rating(source: OmdbRatingSource, title: str, year: int | None) -> Ratin
 
     return result
 
+
 _INDEX_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -146,10 +161,9 @@ _INDEX_HTML = """<!DOCTYPE html>
 <title>Films to Fly To</title>
 <style>
   *, *::before, *::after {{ box-sizing: border-box; }}
-  body {{ font-family: system-ui, sans-serif; background: #0d1117; color: #e6edf3; margin: 0; padding: 1.5rem 2rem; }}
+  body {{ font-family: system-ui, sans-serif; background: #0d1117; color: #e6edf3; margin: 0; padding: 1.5rem 1rem; }}
   h1 {{ color: #e6edf3; margin: 0 0 1.25rem; font-size: 1.6rem; letter-spacing: -0.02em; }}
-  form {{ display: flex; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 1.75rem; }}
-  input {{ padding: 0.5rem 0.75rem; background: #161b22; border: 1px solid #30363d; border-radius: 6px; font-size: 1rem; color: #e6edf3; }}
+  input, select {{ padding: 0.5rem 0.75rem; background: #161b22; border: 1px solid #30363d; border-radius: 6px; font-size: 1rem; color: #e6edf3; }}
   input::placeholder {{ color: #8b949e; }}
   button {{ padding: 0.5rem 1.25rem; background: #1f6feb; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 1rem; font-weight: 600; }}
   button:hover {{ background: #388bfd; }}
@@ -168,24 +182,117 @@ _INDEX_HTML = """<!DOCTYPE html>
   .card-title {{ font-size: 0.85rem; font-weight: 600; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }}
   .card-year {{ font-size: 0.78rem; color: #8b949e; }}
   .error {{ color: #f85149; padding: 1rem; background: #161b22; border: 1px solid #da3633; border-radius: 6px; }}
+  form.search {{ display: flex; flex-direction: column; gap: 1rem; max-width: 34rem; margin-bottom: 1.75rem; }}
+  fieldset {{ border: 1px solid #30363d; border-radius: 6px; padding: 0.75rem; margin: 0; display: flex; flex-wrap: wrap; gap: 0.75rem; }}
+  legend {{ color: #8b949e; font-size: 0.85rem; padding: 0 0.4rem; }}
+  label {{ display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.85rem; color: #8b949e; flex: 1 1 8rem; }}
+  .modes {{ display: flex; gap: 1rem; font-size: 0.95rem; }}
+  .modes[hidden] {{ display: none; }}
+  .modes label {{ flex-direction: row; align-items: center; gap: 0.4rem; flex: 0 0 auto; color: #e6edf3; }}
+  .hidden-group {{ display: none; }}
+  .supported {{ margin-top: 2rem; color: #8b949e; font-size: 0.9rem; }}
+  .supported h2 {{ font-size: 1.05rem; color: #e6edf3; margin: 0 0 0.5rem; }}
+  .supported li {{ margin: 0.2rem 0; }}
+  .back {{ color: #58a6ff; margin-left: 0.5rem; }}
 </style>
 </head>
 <body>
 <h1>Films to Fly To ✈️</h1>
-<form method="post" action="/search">
-  <input name="flight" placeholder="Flight e.g. BA286" value="{flight}" required>
-  <input name="date" type="date" value="{date}" required>
-  <button type="submit">Find films</button>
-</form>
 {body}
 </body>
 </html>
 """
 
+_FORM_JS = """<script>
+(function () {
+  var radios = document.querySelectorAll('input[name="mode"]');
+  var groups = {
+    flight: document.getElementById('group-flight'),
+    route: document.getElementById('group-route')
+  };
+  function sync() {
+    var mode = document.querySelector('input[name="mode"]:checked').value;
+    Object.keys(groups).forEach(function (k) {
+      groups[k].classList.toggle('hidden-group', k !== mode);
+    });
+  }
+  document.getElementById('modes').hidden = false;
+  radios.forEach(function (r) { r.addEventListener('change', sync); });
+  sync();
+}());
+</script>"""
 
-def _render_page(body: str = "", flight: str = "", date: str = "") -> HTMLResponse:
-    html = _INDEX_HTML.format(body=body, flight=flight, date=date)
-    return HTMLResponse(html)
+
+def _form_html(
+    airline: str = "",
+    flight: str = "",
+    from_: str = "",
+    to: str = "",
+    date: str = "",
+    time_: str = "",
+) -> str:
+    """Search form. Without JS both input groups are shown."""
+    route_mode = bool((from_ or to) and not flight)
+    options = "".join(
+        f'<option value="{_esc(a.iata)}"'
+        f"{' selected' if a.iata == airline.upper() else ''}>"
+        f"{_esc(a.name)} ({_esc(a.iata)})</option>"
+        for a in SUPPORTED_AIRLINES
+    )
+    return (
+        '<form class="search" method="post" action="/search">'
+        '<div class="modes" id="modes" hidden>'
+        '<label><input type="radio" name="mode" value="flight"'
+        f"{'' if route_mode else ' checked'}> Flight number</label>"
+        '<label><input type="radio" name="mode" value="route"'
+        f"{' checked' if route_mode else ''}> Route</label></div>"
+        f'<label>Airline<select name="airline">{options}</select></label>'
+        '<fieldset id="group-flight"><legend>Flight number</legend>'
+        '<label>Flight<input name="flight" placeholder="e.g. BA286" '
+        f'value="{_esc(flight)}"></label></fieldset>'
+        '<fieldset id="group-route"><legend>Route</legend>'
+        '<label>From<input name="from" placeholder="LHR" maxlength="3" '
+        f'pattern="[A-Za-z]{{3}}" value="{_esc(from_)}"></label>'
+        '<label>To<input name="to" placeholder="JFK" maxlength="3" '
+        f'pattern="[A-Za-z]{{3}}" value="{_esc(to)}"></label></fieldset>'
+        "<fieldset><legend>Departure</legend>"
+        f'<label>Date<input name="date" type="date" value="{_esc(date)}" required></label>'
+        f'<label>Time (optional)<input name="time" type="time" value="{_esc(time_)}"></label>'
+        "</fieldset>"
+        '<button type="submit">Find films</button></form>' + _FORM_JS
+    )
+
+
+def _supported_html() -> str:
+    items = "".join(
+        f"<li>{_esc(a.name)} ({_esc(a.iata)})</li>" for a in SUPPORTED_AIRLINES
+    )
+    return (
+        '<section class="supported" id="supported"><h2>Supported airlines</h2>'
+        f"<ul>{items}</ul></section>"
+    )
+
+
+def _supported_names() -> str:
+    return ", ".join(f"{a.name} ({a.iata})" for a in SUPPORTED_AIRLINES)
+
+
+def _render_page(
+    body: str = "",
+    *,
+    airline: str = "",
+    flight: str = "",
+    from_: str = "",
+    to: str = "",
+    date: str = "",
+    time_: str = "",
+    show_form: bool = True,
+) -> HTMLResponse:
+    parts = [body]
+    if show_form:
+        parts.append(_form_html(airline, flight, from_, to, date, time_))
+        parts.append(_supported_html())
+    return HTMLResponse(_INDEX_HTML.format(body="\n".join(parts)))
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -195,24 +302,80 @@ async def index():
 
 @app.post("/search", response_class=HTMLResponse)
 async def search(
-    flight: Annotated[str, Form()],
-    date: Annotated[str, Form()],
+    airline: Annotated[str, Form()] = "",
+    flight: Annotated[str, Form()] = "",
+    from_: Annotated[str, Form(alias="from")] = "",
+    to: Annotated[str, Form()] = "",
+    date: Annotated[str, Form()] = "",
+    time_: Annotated[str, Form(alias="time")] = "",
 ):
+    airline, flight, from_, to, date, time_ = (
+        v.strip() for v in (airline, flight, from_, to, date, time_)
+    )
+
+    def fail(msg: str) -> HTMLResponse:
+        return _render_page(
+            f'<p class="error">{_esc(msg)}</p>',
+            airline=airline,
+            flight=flight,
+            from_=from_,
+            to=to,
+            date=date,
+            time_=time_,
+        )
+
+    route_ok = len(from_) == 3 and len(to) == 3 and from_.isalpha() and to.isalpha()
+    if not flight and not route_ok:
+        return fail(
+            "Enter a flight number, or both a departure and arrival airport "
+            "(3-letter IATA codes)."
+        )
+    if not date:
+        return fail("Please enter a departure date.")
+    try:
+        datetime.strptime(date, "%Y-%m-%d")
+    except ValueError:
+        return fail("Departure date must be in YYYY-MM-DD format.")
+
+    chosen: Airline | None
+    if flight:
+        chosen = airline_for_flight(flight)
+        if chosen is None:
+            return fail(
+                f'Sorry, we don\'t support the airline for flight "{flight}". '
+                f"Supported airlines: {_supported_names()}."
+            )
+        what = flight.upper().replace(" ", "")
+    else:
+        chosen = get_airline(airline)
+        if chosen is None:
+            return fail(f"Please choose a supported airline: {_supported_names()}.")
+        what = f"{from_.upper()} \u2192 {to.upper()}"
+    when = f"{date} {time_}".strip()
+    header = f"{chosen.name} \u00b7 {what} \u00b7 {when}"
+    back = '<a class="back" href="/">Change flight</a>'
+
+    def error_page(msg: str) -> HTMLResponse:
+        return _render_page(
+            f'<p class="error">{_esc(msg)}</p><p>{back}</p>', show_form=False
+        )
+
     provider_name = os.environ.get("FTFT_RATING_PROVIDER", "omdb")
     omdb_key = os.environ.get("OMDB_API_KEY")
     if provider_name == "omdb" and not omdb_key:
-        body = '<p class="error">OMDB_API_KEY is not set. Set it in your environment and restart the server.</p>'
-        return _render_page(body, flight, date)
+        return error_page(
+            "OMDB_API_KEY is not set. Set it in your environment and restart the server."
+        )
 
     try:
         films = _get_catalog()
     except urllib.error.URLError as exc:
-        body = f'<p class="error">Could not fetch BA catalog: {exc}</p>'
-        return _render_page(body, flight, date)
+        return error_page(f"Could not fetch {chosen.name} catalog: {exc}")
 
     if not films:
-        body = '<p class="error">BA catalog is behind a holding page or empty. Try again later.</p>'
-        return _render_page(body, flight, date)
+        return error_page(
+            f"{chosen.name} catalog is behind a holding page or empty. Try again later."
+        )
 
     kwargs = {"api_key": omdb_key} if provider_name == "omdb" else {}
     source = get_rating_provider(provider_name, **kwargs)
@@ -226,8 +389,9 @@ async def search(
             result = _get_rating(source, film.title, film.year)
         except urllib.error.HTTPError as exc:
             if exc.code in (401, 403):
-                body = f'<p class="error">OMDb rejected API key (HTTP {exc.code}). Check OMDB_API_KEY.</p>'
-                return _render_page(body, flight, date)
+                return error_page(
+                    f"OMDb rejected API key (HTTP {exc.code}). Check OMDB_API_KEY."
+                )
             result = None
         except (urllib.error.URLError, json.JSONDecodeError):
             result = None
@@ -235,9 +399,14 @@ async def search(
 
     ranked.sort(key=lambda r: r.sort_key, reverse=True)
 
-    cards = [f'<p class="info">BA {flight} · {date} · {len(ranked)} films</p><div class="grid">']
+    cards = [
+        f'<p class="info">{_esc(header)} · {len(ranked)} films {back}</p>'
+        '<div class="grid">'
+    ]
     for item in ranked:
-        score = item.rating.score if item.rating and item.rating.score is not None else None
+        score = (
+            item.rating.score if item.rating and item.rating.score is not None else None
+        )
         if score is not None and score >= 7.0:
             badge_cls, badge_txt = "badge-good", f"{score:.1f}"
         elif score is not None:
@@ -251,7 +420,11 @@ async def search(
         else:
             poster_html = '<div class="poster-placeholder">🎬</div>'
 
-        year_html = f'<div class="card-year">{item.catalog.year}</div>' if item.catalog.year else ""
+        year_html = (
+            f'<div class="card-year">{item.catalog.year}</div>'
+            if item.catalog.year
+            else ""
+        )
 
         if item.catalog.detail_url:
             tag_open = f'<a class="card" href="{item.catalog.detail_url}" target="_blank" rel="noopener">'
@@ -261,26 +434,32 @@ async def search(
             tag_close = "</div>"
 
         cards.append(
-            f'{tag_open}'
+            f"{tag_open}"
             f'<div class="poster-wrap">'
-            f'{poster_html}'
+            f"{poster_html}"
             f'<span class="badge {badge_cls}">{badge_txt}</span>'
-            f'</div>'
+            f"</div>"
             f'<div class="card-body">'
             f'<div class="card-title">{safe_title}</div>'
-            f'{year_html}'
-            f'</div>'
-            f'{tag_close}'
+            f"{year_html}"
+            f"</div>"
+            f"{tag_close}"
         )
     cards.append("</div>")
 
     body = "\n".join(cards)
-    return _render_page(body, flight, date)
+    return _render_page(body, show_form=False)
 
 
 def _esc(s: str) -> str:
     """HTML-escape a string for use in attribute values."""
-    return s.replace("&", "&amp;").replace('"', "&quot;").replace("'", "&#39;").replace("<", "&lt;").replace(">", "&gt;")
+    return (
+        s.replace("&", "&amp;")
+        .replace('"', "&quot;")
+        .replace("'", "&#39;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
 
 
 _FILTER_JS = """<script>

@@ -24,5 +24,6 @@ packages = ["src/films_to_fly_to"]
 
 [dependency-groups]
 dev = [
+    "httpx>=0.28.1",
     "pytest>=9.0.3",
 ]
