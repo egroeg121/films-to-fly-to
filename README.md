@@ -19,6 +19,12 @@ docker compose up -d
 
 The server is now accessible at http://localhost:8000.
 
+The landing page takes either a flight number (e.g. `BA286`) or a from/to
+airport pair (3-letter IATA codes), plus a departure date, optional time and an
+airline. It lists the supported airlines (the registry in
+`src/films_to_fly_to/airlines.py`). A flight number's prefix selects the airline;
+route searches use the airline dropdown.
+
 ### Access from any Tailscale device
 
 The host's Tailscale connection exposes port 8000 to all your Tailscale devices automatically.
