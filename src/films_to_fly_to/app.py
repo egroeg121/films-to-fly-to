@@ -194,10 +194,11 @@ _INDEX_HTML = """<!DOCTYPE html>
   .supported h2 {{ font-size: 1.05rem; color: #e6edf3; margin: 0 0 0.5rem; }}
   .supported li {{ margin: 0.2rem 0; }}
   .back {{ color: #58a6ff; margin-left: 0.5rem; }}
+  h1 a.home {{ color: inherit; text-decoration: none; }}
 </style>
 </head>
 <body>
-<h1>Films to Fly To ✈️</h1>
+<h1><a class="home" href="/">Films to Fly To ✈️</a></h1>
 {body}
 </body>
 </html>
