@@ -17,6 +17,7 @@ dependencies = [
 films-to-fly-to = "films_to_fly_to.cli:main"
 catalog-snapshot = "films_to_fly_to.cli_snapshot:main"
 catalog-diff = "films_to_fly_to.cli_diff:main"
+build-static = "films_to_fly_to.static_site:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/films_to_fly_to"]
