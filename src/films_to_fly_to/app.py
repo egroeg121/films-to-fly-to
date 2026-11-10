@@ -308,10 +308,16 @@ async def search(
     to: Annotated[str, Form()] = "",
     date: Annotated[str, Form()] = "",
     time_: Annotated[str, Form(alias="time")] = "",
+    mode: Annotated[str, Form()] = "",
 ):
     airline, flight, from_, to, date, time_ = (
         v.strip() for v in (airline, flight, from_, to, date, time_)
     )
+    # The JS toggle hides the inactive group but still submits it; honour the mode.
+    if mode == "route":
+        flight = ""
+    elif mode == "flight":
+        from_ = to = ""
 
     def fail(msg: str) -> HTMLResponse:
         return _render_page(

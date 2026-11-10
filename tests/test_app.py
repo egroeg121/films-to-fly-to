@@ -60,6 +60,21 @@ def test_route_search(client):
     assert "Good Film" in r.text
 
 
+def test_route_mode_ignores_stale_flight(client):
+    r = client.post(
+        "/search",
+        data={
+            "mode": "route",
+            "airline": "BA",
+            "flight": "XX999",
+            "from": "LHR",
+            "to": "JFK",
+            "date": "2026-11-12",
+        },
+    )
+    assert "British Airways · LHR → JFK · 2026-11-12" in r.text
+
+
 def test_unsupported_flight_prefix(client):
     r = client.post("/search", data={"flight": "XX123", "date": "2026-11-12"})
     assert 'class="error"' in r.text
