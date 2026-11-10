@@ -98,3 +98,7 @@ def test_input_escaped(client):
     r = client.post("/search", data={"flight": "<script>", "date": "2026-11-12"})
     assert "&lt;script&gt;" in r.text
     assert 'value="<script>"' not in r.text
+
+
+def test_title_links_home(client):
+    assert '<a class="home" href="/">' in client.get("/").text

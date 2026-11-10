@@ -90,3 +90,9 @@ def test_secret_guard_covers_landing_page(tmp_path, monkeypatch):
 def test_main_requires_key(monkeypatch, tmp_path):
     monkeypatch.delenv("OMDB_API_KEY", raising=False)
     assert main(["--out", str(tmp_path)]) == 2
+
+
+def test_title_links_home(tmp_path):
+    build_site([], tmp_path)
+    for name in ("index.html", "films.html"):
+        assert '<a class="home" href="index.html">' in (tmp_path / name).read_text()

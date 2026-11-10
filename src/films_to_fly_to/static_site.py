@@ -189,11 +189,12 @@ _FILMS_HTML = """<!DOCTYPE html>
   .back { color: #58a6ff; text-decoration: none; font-size: 0.9rem; }
   .back:hover { text-decoration: underline; }
   .context { color: #8b949e; margin: 0 0 1rem; font-size: 0.95rem; }
+  h1 a.home { color: inherit; text-decoration: none; }
 </style>
 </head>
 <body>
 <a class="back" href="index.html">&larr; Change flight</a>
-<h1>Films to Fly To &#9992;&#65039;</h1>
+<h1><a class="home" href="index.html">Films to Fly To &#9992;&#65039;</a></h1>
 <p class="context" id="context" hidden></p>
 <div class="controls">
   <input id="q" type="search" placeholder="Search title" aria-label="Search title">
@@ -318,11 +319,12 @@ _LANDING_HTML = r"""<!DOCTYPE html>
   ul.airlines li { display: flex; justify-content: space-between; padding: 0.5rem 0.75rem; background: #161b22; border: 1px solid #30363d; border-radius: 6px; margin-bottom: 0.4rem; }
   code { color: #8b949e; }
   .note { color: #8b949e; font-size: 0.85rem; }
+  h1 a.home { color: inherit; text-decoration: none; }
 </style>
 </head>
 <body>
 <main>
-<h1>Films to Fly To &#9992;&#65039;</h1>
+<h1><a class="home" href="index.html">Films to Fly To &#9992;&#65039;</a></h1>
 <p class="lead">See the best-rated in-flight films for your flight.</p>
 <form id="f" novalidate>
   <div class="tabs">
