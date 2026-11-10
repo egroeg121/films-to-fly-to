@@ -50,16 +50,24 @@ The snapshot cron runs on the host, not inside the container:
 
 The ranked film list can be published as a static site (no server needed). The
 `build-static` command fetches the BA catalog and OMDb ratings once and writes
-`site/index.html` (client-side search, sort, genre and rating filters) plus
-`site/films.json`:
+three files:
+
+- `site/index.html` - landing page: enter a flight number (or from/to airports),
+  departure date/time and airline (from the supported-airlines registry in
+  `airlines.py`), then jump to the films page. Lists the supported airlines.
+- `site/films.html` - the film grid (client-side search, sort, genre and rating
+  filters) with a header showing the flight details read from the query string.
+- `site/films.json` - the ranked data.
+
 
 ```bash
 OMDB_API_KEY=your_key_here uv run build-static [--out site]
 ```
 
 The key is read from the environment at build time only; it is never written to
-the output (the build aborts if it would be). The flight/date form from the
-Docker app is not part of the static site, since the catalog is fleet-wide.
+any output file (the build aborts if it would be). Catalogs are fleet-wide, so the
+flight details only choose the airline and label the page; they do not change
+which films are shown.
 
 `.github/workflows/pages.yml` rebuilds and deploys on every push to `main`, monthly
 (1st, 05:00 UTC) and on manual dispatch. One-time setup:
